@@ -1,0 +1,81 @@
+#!/usr/bin/env ruby
+require 'clamp'
+require 'aws-sdk'
+
+$LOAD_PATH << File.expand_path('../lib', __dir__)
+require 'template'
+
+Clamp do
+  subcommand 'output', 'Outputs a stack template as JSON' do
+    option "--yaml", "YAML_FILE", "Import yaml file as local variables (if using cfndsl)"
+    option "--stack-name", "STACK_NAME", "The name of the stack to output"
+    parameter "TEMPLATE_FILE", "the file that contains the template"
+    def execute
+      puts template.to_s
+    end
+  end
+
+  subcommand 'create', 'Create a stack' do
+    option "--yaml", "YAML_FILE", "Import yaml file as local variables (if using cfndsl)"
+    option "--stack-name", "STACK_NAME", "The name of the stack to create", required: true
+
+    parameter "TEMPLATE_FILE", "the file that contains the template"
+
+    def execute
+      client.create_stack(
+        stack_name: stack_name,
+        disable_rollback: true,
+        template_body: template.to_s
+      )
+      wait_until :stack_create_complete
+    end
+  end
+
+  subcommand 'update', 'Update an existing stack' do
+    option "--yaml", "YAML_FILE", "Import yaml file as local variables (if using cfndsl)"
+    option "--stack-name", "STACK_NAME", "The name of the stack to update", required: true
+
+    parameter "TEMPLATE_FILE", "the file that contains the template"
+    def execute
+      client.update_stack(
+        stack_name: stack_name,
+        template_body: template.to_s
+      )
+      wait_until :stack_update_complete
+    end
+  end
+
+  subcommand 'delete', 'Delete an existing stack' do
+    option "--stack-name", "STACK_NAME", "The name of the stack to delete", required: true
+    option "--yaml", "YAML_FILE", "<ignored>"
+    parameter "TEMPLATE_FILE", "<ignored>"
+
+    def execute
+      client.delete_stack(
+        stack_name: stack_name,
+      )
+      wait_until :stack_delete_complete
+    end
+  end
+
+  private
+
+  def wait_until state
+    client.wait_until(state, stack_name: stack_name) do |w|
+      # seconds between each attempt
+      w.interval = 10
+      # maximum number of polling attempts before giving up
+      w.max_attempts = 60
+    end
+  end
+
+  def template
+    @template ||= Template.new(template_file).tap do |temp|
+      temp << [:yaml, File.expand_path(yaml)] if yaml
+    end
+  end
+
+  def client
+    @client ||= Aws::CloudFormation::Client.new
+  end
+end
